@@ -202,7 +202,15 @@ jobs:
         run: dotnet publish BBDown -r linux-x64 -c Release -o ./build/linux-x64
 
       - name: Build Linux ARM64
-        run: dotnet publish BBDown -r linux-arm64 -c Release -o ./build/linux-arm64
+        run: |
+          # Set up environment for cross-compilation
+          export CC=aarch64-linux-gnu-gcc
+          export CXX=aarch64-linux-gnu-g++
+          export AR=aarch64-linux-gnu-ar
+          export STRIP=aarch64-linux-gnu-strip
+          export OBJCOPY=aarch64-linux-gnu-objcopy
+          
+          dotnet publish BBDown -r linux-arm64 -c Release -o ./build/linux-arm64
 
       - name: Package Linux builds
         run: |
