@@ -1,0 +1,268 @@
+name: BBDown Auto Build & Release
+
+on:
+  schedule:
+    - cron: '0 2 * * *'  # Check at 2am every day
+  workflow_dispatch:  # Allow manual triggering
+
+env:
+  UPSTREAM_REPO: 'nilaoda/BBDown'
+  DOTNET_SDK_VERSION: '9.0.*'
+  ACTIONS_ALLOW_USE_UNSECURE_NODE_VERSION: true
+
+jobs:
+  check-upstream:
+    runs-on: ubuntu-latest
+    outputs:
+      has-updates: ${{ steps.check.outputs.has_updates }}
+      latest-commit: ${{ steps.check.outputs.latest_commit }}
+      commit-message: ${{ steps.check.outputs.commit_message }}
+      build-version: ${{ steps.version.outputs.version }}
+      build-time: ${{ steps.version.outputs.build_time }}
+    
+    steps:
+      - name: Check upstream for updates
+        id: check
+        run: |
+          # Get the latest upstream commit information
+          LATEST_COMMIT=$(curl -s "https://api.github.com/repos/${{ env.UPSTREAM_REPO }}/commits/master" | jq -r '.sha')
+          COMMIT_MESSAGE=$(curl -s "https://api.github.com/repos/${{ env.UPSTREAM_REPO }}/commits/master" | jq -r '.commit.message' | head -1)
+          
+          echo "latest_commit=$LATEST_COMMIT" >> $GITHUB_OUTPUT
+          echo "commit_message=$COMMIT_MESSAGE" >> $GITHUB_OUTPUT
+          
+          # Check if this version has already been built
+          RELEASE_EXISTS=$(curl -s "https://api.github.com/repos/${{ github.repository }}/releases" | jq -r --arg commit "$LATEST_COMMIT" '.[] | select(.tag_name | contains($commit[0:7])) | .tag_name' | head -1)
+          
+          if [ -z "$RELEASE_EXISTS" ]; then
+            echo "has_updates=true" >> $GITHUB_OUTPUT
+            echo "Found a new version that needs to be built: $LATEST_COMMIT"
+            echo "Submission Information: $COMMIT_MESSAGE"
+          else
+            echo "has_updates=false" >> $GITHUB_OUTPUT
+            echo "Version $LATEST_COMMIT has already been built, skipping"
+          fi
+
+      - name: Generate build version
+        id: version
+        if: steps.check.outputs.has_updates == 'true'
+        run: |
+          SHORT_COMMIT=$(echo "${{ steps.check.outputs.latest_commit }}" | cut -c1-7)
+          BUILD_DATE=$(date -u +'%Y%m%d')
+          BUILD_TIME=$(date -u +'%Y-%m-%d %H:%M:%S UTC')
+          VERSION="v${BUILD_DATE}-${SHORT_COMMIT}"
+          echo "version=$VERSION" >> $GITHUB_OUTPUT
+          echo "build_time=$BUILD_TIME" >> $GITHUB_OUTPUT
+          echo "Build version number: $VERSION"
+          echo "Build time: $BUILD_TIME"
+
+  build-windows:
+    needs: check-upstream
+    if: needs.check-upstream.outputs.has-updates == 'true'
+    runs-on: windows-latest
+    
+    steps:
+      - name: Clone upstream repository
+        run: |
+          git clone https://github.com/${{ env.UPSTREAM_REPO }}.git .
+          git checkout ${{ needs.check-upstream.outputs.latest-commit }}
+
+      - name: Setup .NET
+        uses: actions/setup-dotnet@v4
+        with:
+          dotnet-version: ${{ env.DOTNET_SDK_VERSION }}
+
+      - name: Install zip
+        run: choco install zip --no-progress --yes
+
+      - name: Build Windows x64
+        run: dotnet publish BBDown -r win-x64 -c Release -o ./build/win-x64
+
+      - name: Build Windows ARM64
+        run: dotnet publish BBDown -r win-arm64 -c Release -o ./build/win-arm64
+
+      - name: Package Windows builds
+        run: |
+          cd ./build/win-x64
+          zip ../../BBDown-${{ needs.check-upstream.outputs.build-version }}-win-x64.zip BBDown.exe
+          cd ../win-arm64
+          zip ../../BBDown-${{ needs.check-upstream.outputs.build-version }}-win-arm64.zip BBDown.exe
+
+      - name: Upload Windows artifacts
+        uses: actions/upload-artifact@v4
+        with:
+          name: windows-builds
+          path: |
+            BBDown-${{ needs.check-upstream.outputs.build-version }}-win-x64.zip
+            BBDown-${{ needs.check-upstream.outputs.build-version }}-win-arm64.zip
+
+  build-linux:
+    needs: check-upstream
+    if: needs.check-upstream.outputs.has-updates == 'true'
+    runs-on: ubuntu-latest
+    
+    steps:
+      - name: Clone upstream repository
+        run: |
+          git clone https://github.com/${{ env.UPSTREAM_REPO }}.git .
+          git checkout ${{ needs.check-upstream.outputs.latest-commit }}
+
+      - name: Setup cross-compilation for ARM64
+        run: |
+          sudo dpkg --add-architecture arm64
+          sudo apt-get update
+          sudo apt-get install -y curl wget libicu-dev libcurl4-openssl-dev zlib1g-dev libkrb5-dev clang llvm binutils-aarch64-linux-gnu gcc-aarch64-linux-gnu
+
+      - name: Setup .NET
+        uses: actions/setup-dotnet@v4
+        with:
+          dotnet-version: ${{ env.DOTNET_SDK_VERSION }}
+
+      - name: Build Linux x64
+        run: dotnet publish BBDown -r linux-x64 -c Release -o ./build/linux-x64
+
+      - name: Build Linux ARM64
+        run: dotnet publish BBDown -r linux-arm64 -c Release -o ./build/linux-arm64
+
+      - name: Package Linux builds
+        run: |
+          cd ./build/linux-x64
+          zip ../../BBDown-${{ needs.check-upstream.outputs.build-version }}-linux-x64.zip BBDown
+          cd ../linux-arm64
+          zip ../../BBDown-${{ needs.check-upstream.outputs.build-version }}-linux-arm64.zip BBDown
+
+      - name: Upload Linux artifacts
+        uses: actions/upload-artifact@v4
+        with:
+          name: linux-builds
+          path: |
+            BBDown-${{ needs.check-upstream.outputs.build-version }}-linux-x64.zip
+            BBDown-${{ needs.check-upstream.outputs.build-version }}-linux-arm64.zip
+
+  build-macos:
+    needs: check-upstream
+    if: needs.check-upstream.outputs.has-updates == 'true'
+    runs-on: macos-latest
+    
+    steps:
+      - name: Clone upstream repository
+        run: |
+          git clone https://github.com/${{ env.UPSTREAM_REPO }}.git .
+          git checkout ${{ needs.check-upstream.outputs.latest-commit }}
+
+      - name: Setup .NET
+        uses: actions/setup-dotnet@v4
+        with:
+          dotnet-version: ${{ env.DOTNET_SDK_VERSION }}
+
+      - name: Build macOS x64
+        run: dotnet publish BBDown -r osx-x64 -c Release -o ./build/osx-x64
+
+      - name: Build macOS ARM64
+        run: dotnet publish BBDown -r osx-arm64 -c Release -o ./build/osx-arm64
+
+      - name: Package macOS builds
+        run: |
+          cd ./build/osx-x64
+          zip ../../BBDown-${{ needs.check-upstream.outputs.build-version }}-osx-x64.zip BBDown
+          cd ../osx-arm64
+          zip ../../BBDown-${{ needs.check-upstream.outputs.build-version }}-osx-arm64.zip BBDown
+
+      - name: Upload macOS artifacts
+        uses: actions/upload-artifact@v4
+        with:
+          name: macos-builds
+          path: |
+            BBDown-${{ needs.check-upstream.outputs.build-version }}-osx-x64.zip
+            BBDown-${{ needs.check-upstream.outputs.build-version }}-osx-arm64.zip
+
+  create-release:
+    needs: [check-upstream, build-windows, build-linux, build-macos]
+    if: needs.check-upstream.outputs.has-updates == 'true'
+    runs-on: ubuntu-latest
+    
+    steps:
+      - name: Download all artifacts
+        uses: actions/download-artifact@v4
+        with:
+          path: ./artifacts
+
+      - name: Organize release files
+        run: |
+          mkdir -p ./release-files
+          find ./artifacts -name "*.zip" -exec cp {} ./release-files/ \;
+          ls -la ./release-files/
+
+      - name: Create Release
+        uses: softprops/action-gh-release@v1
+        with:
+          tag_name: ${{ needs.check-upstream.outputs.build-version }}
+          name: "BBDown ${{ needs.check-upstream.outputs.build-version }}"
+          body: |
+            🤖 **Automatic build version**
+            
+            Automatically build based on the latest code of [nilaoda/BBDown](https://github.com/${{ env.UPSTREAM_REPO }})
+            
+            **Version information:**
+            - 🆔 Upstream commit: `${{ needs.check-upstream.outputs.latest-commit }}`
+            - 📝 Commit message: ${{ needs.check-upstream.outputs.commit-message }}
+            - 🕐 Build time: ${{ needs.check-upstream.outputs.build-time }}
+            
+            **Supported Platforms:**
+            - ✅ Windows x64/ARM64
+            - ✅ Linux x64/ARM64  
+            - ✅ macOS x64/ARM64
+            
+            **How ​​to use:**
+            1. Download the compressed package for the corresponding platform
+            2. Run the BBDown executable file directly after decompression
+            3. For detailed instructions, please refer to [Original project documentation](https://github.com/${{ env.UPSTREAM_REPO }})
+            
+            ---
+            > This version is automatically built by GitHub Actions and keeps up to date with the original project
+          files: ./release-files/*
+          draft: false
+          prerelease: false
+
+  # Notification when there is no update
+  no-updates:
+    needs: check-upstream
+    if: needs.check-upstream.outputs.has-updates == 'false'
+    runs-on: ubuntu-latest
+    
+    steps:
+      - name: No updates notification
+        run: |
+          echo "✅ Check completed: No new updates upstream"
+          echo "The latest version is the latest build version"
+          
+          echo "## ✅ Check completed" >> $GITHUB_STEP_SUMMARY
+          echo "" >> $GITHUB_STEP_SUMMARY
+          echo "No new updates to the upstream repository, no need to rebuild" >> $GITHUB_STEP_SUMMARY
+          echo "" >> $GITHUB_STEP_SUMMARY
+          echo "**Upstream repository**: [${{ env.UPSTREAM_REPO }}](https://github.com/${{ env.UPSTREAM_REPO }})" >> $GITHUB_STEP_SUMMARY
+          echo "**Check time**: $(date '+%Y-%m-%d %H:%M:%S')" >> $GITHUB_STEP_SUMMARY
+
+  # Build failure handling
+  build-failed:
+    needs: [check-upstream, build-windows, build-linux, build-macos, create-release]
+    if: failure() && needs.check-upstream.outputs.has-updates == 'true'
+    runs-on: ubuntu-latest
+    
+    steps:
+      - name: Build failure notification
+        run: |
+          echo "❌ Build failed"
+          echo "Workflow link: https://github.com/${{ github.repository }}/actions/runs/${{ github.run_id }}"
+          echo "Upstream commit: ${{ needs.check-upstream.outputs.latest-commit }}"
+          
+          echo "## ❌ Build failed" >> $GITHUB_STEP_SUMMARY
+          echo "" >> $GITHUB_STEP_SUMMARY
+          echo "**Failure time**: $(date '+%Y-%m-%d %H:%M:%S')" >> $GITHUB_STEP_SUMMARY
+          echo "**Upstream commit**: ${{ needs.check-upstream.outputs.latest-commit }}" >> $GITHUB_STEP_SUMMARY
+          echo "**Workflow**: [View details](https://github.com/${{ github.repository }}/actions/runs/${{ github.run_id }})" >> $GITHUB_STEP_SUMMARY
+          echo "" >> $GITHUB_STEP_SUMMARY
+          echo "### Possible reasons" >> $GITHUB_STEP_SUMMARY
+          echo "- Upstream code compilation error" >> $GITHUB_STEP_SUMMARY
+          echo "- Build environment dependency issue" >> $GITHUB_STEP_SUMMARY
+          echo "- .NET SDK version is incompatible" >> $GITHUB_STEP_SUMMARY
