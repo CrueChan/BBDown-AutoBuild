@@ -1,8 +1,8 @@
 # BBDown Auto-Build
 
-[![Auto Build](https://github.com/CrueChan/BBDown/actions/workflows/auto-build.yml/badge.svg)](https://github.com/CrueChan/BBDown/actions/workflows/auto-build.yml)
-[![Latest Release](https://img.shields.io/github/v/release/CrueChan/BBDown)](https://github.com/CrueChan/BBDown/releases/latest)
-[![Downloads](https://img.shields.io/github/downloads/CrueChan/BBDown/total)](https://github.com/CrueChan/BBDown/releases)
+[![Auto Build](https://github.com/CrueChan/BBDown-AutoBuild/actions/workflows/auto-build.yml/badge.svg)](https://github.com/CrueChan/BBDown-AutoBuild/actions/workflows/auto-build.yml)
+[![Latest Release](https://img.shields.io/github/v/release/CrueChan/BBDown-AutoBuild)](https://github.com/CrueChan/BBDown-AutoBuild/releases/latest)
+[![Downloads](https://img.shields.io/github/downloads/CrueChan/BBDown-AutoBuild/total)](https://github.com/CrueChan/BBDown-AutoBuild/releases)
 
 Automated builds of [nilaoda/BBDown](https://github.com/nilaoda/BBDown) with pre-compiled binaries for multiple platforms.
 
@@ -22,7 +22,7 @@ Each release includes pre-compiled binaries for:
 
 ## 🚀 Quick Start
 
-1. Go to [Releases](https://github.com/CrueChan/BBDown/releases/latest)
+1. Go to [Releases](https://github.com/CrueChan/BBDown-AutoBuild/releases/latest)
 2. Download the appropriate version for your platform
 3. Extract the archive
 4. Run the `BBDown` executable directly
@@ -38,14 +38,14 @@ For detailed usage instructions, please refer to the [original project documenta
 
 ## 📋 Build Status
 
-The latest build status and logs can be viewed in the [Actions tab](https://github.com/CrueChan/BBDown/actions).
+The latest build status and logs can be viewed in the [Actions tab](https://github.com/CrueChan/BBDown-AutoBuild/actions).
 
 ## 🔗 Related Links
 
 - **Original Project**: [nilaoda/BBDown](https://github.com/nilaoda/BBDown)
 - **Documentation**: [BBDown Wiki](https://github.com/nilaoda/BBDown#readme)
 - **Issues**: Please report BBDown-related issues to the [original repository](https://github.com/nilaoda/BBDown/issues)
-- **Build Issues**: For problems with automated builds, open an issue [here](https://github.com/CrueChan/BBDown/issues)
+- **Build Issues**: For problems with automated builds, open an issue [here](https://github.com/CrueChan/BBDown-AutoBuild/issues)
 
 ## ⚠️ Disclaimer
 
