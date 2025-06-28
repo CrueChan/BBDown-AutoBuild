@@ -1,8 +1,8 @@
 # BBDown Auto-Build
 
-[![Auto Build](https://github.com/CrueChan/BBDown-AutoBuild/actions/workflows/auto-build.yml/badge.svg)](https://github.com/CrueChan/BBDown-AutoBuild/actions/workflows/auto-build.yml)
 [![Latest Release](https://img.shields.io/github/v/release/CrueChan/BBDown-AutoBuild)](https://github.com/CrueChan/BBDown-AutoBuild/releases/latest)
 [![Downloads](https://img.shields.io/github/downloads/CrueChan/BBDown-AutoBuild/total)](https://github.com/CrueChan/BBDown-AutoBuild/releases)
+[![Auto Build](https://github.com/CrueChan/BBDown-AutoBuild/actions/workflows/auto-build.yml/badge.svg)](https://github.com/CrueChan/BBDown-AutoBuild/actions/workflows/auto-build.yml)
 
 Automated builds of [nilaoda/BBDown](https://github.com/nilaoda/BBDown) with pre-compiled binaries for multiple platforms.
 
