@@ -202,7 +202,7 @@ jobs:
           sudo sed -i -e 's/deb http/deb [arch=amd64] http/g' /etc/apt/sources.list
           sudo sed -i -e 's/deb mirror/deb [arch=amd64] mirror/g' /etc/apt/sources.list
           sudo apt-get update
-          sudo apt-get install -y curl wget libicu-dev libcurl4-openssl-dev zlib1g-dev libkrb5-dev clang llvm binutils-aarch64-linux-gnu gcc-aarch64-linux-gnu zlib1g-dev:arm64
+          sudo apt-get install -y curl wget libicu-dev libcurl4-openssl-dev zlib1g-dev libkrb5-dev clang llvm binutils-aarch64-linux-gnu gcc-aarch64-linux-gnu zlib1g-dev:arm64 gcc-aarch64-linux-gnu binutils-aarch64-linux-gnu
 
       - name: Setup .NET
         uses: actions/setup-dotnet@v4
@@ -213,7 +213,15 @@ jobs:
         run: dotnet publish BBDown -r linux-x64 -c Release -o ./build/linux-x64
 
       - name: Build Linux ARM64
-        run: dotnet publish BBDown -r linux-arm64 -c Release -o ./build/linux-arm64
+        run: |
+          # Set up environment for cross-compilation
+          export CC=aarch64-linux-gnu-gcc
+          export CXX=aarch64-linux-gnu-g++
+          export AR=aarch64-linux-gnu-ar
+          export STRIP=aarch64-linux-gnu-strip
+          export OBJCOPY=aarch64-linux-gnu-objcopy
+          
+          dotnet publish BBDown -r linux-arm64 -c Release -o ./build/linux-arm64
 
       - name: Package Linux builds
         run: |
