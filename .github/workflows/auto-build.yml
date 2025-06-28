@@ -5,6 +5,10 @@ on:
     - cron: '0 2 * * *'  # Check for updates daily at 2:00 AM UTC
   workflow_dispatch:  # Allow manual triggering
 
+permissions:
+  contents: write
+  actions: read
+
 env:
   UPSTREAM_REPO: 'nilaoda/BBDown'
   DOTNET_SDK_VERSION: '9.0.*'
@@ -163,7 +167,7 @@ jobs:
         run: dotnet publish BBDown -r linux-x64 -c Release --self-contained -o ./build/linux-x64
 
       - name: Build Linux ARM64
-        run: dotnet publish BBDown -r linux-arm64 -c Release --self-contained -o ./build/linux-arm64
+        run: dotnet publish BBDown -r linux-arm64 -c Release --self-contained -o ./build/linux-arm64 -p:StripSymbols=false
 
       - name: Package Linux builds
         run: |
@@ -239,6 +243,7 @@ jobs:
         with:
           tag_name: ${{ needs.check-upstream.outputs.build-version }}
           name: "BBDown ${{ needs.check-upstream.outputs.build-version }}"
+          token: ${{ secrets.GITHUB_TOKEN }}
           body: |
             🤖 **Automated Build Release**
             
