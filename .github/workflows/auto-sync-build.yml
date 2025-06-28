@@ -1,0 +1,355 @@
+name: Sync and Auto Build Release
+
+on:
+  schedule:
+    - cron: '0 2 * * *'  # 每天凌晨2点检查更新
+  workflow_dispatch:  # 允许手动触发
+
+env:
+  DOTNET_SDK_VERSION: '9.0.*'
+  ACTIONS_ALLOW_USE_UNSECURE_NODE_VERSION: true
+
+jobs:
+  sync-and-check:
+    runs-on: ubuntu-latest
+    outputs:
+      has-new-commits: ${{ steps.sync.outputs.has_new_commits }}
+      new-version: ${{ steps.version.outputs.version }}
+      build-date: ${{ steps.get_date.outputs.date }}
+    
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+        with:
+          token: ${{ secrets.GITHUB_TOKEN }}
+          fetch-depth: 0
+
+      - name: Configure Git
+        run: |
+          git config --global user.name 'github-actions[bot]'
+          git config --global user.email 'github-actions[bot]@users.noreply.github.com'
+
+      - name: Add upstream remote
+        run: |
+          git remote add upstream https://github.com/nilaoda/BBDown.git || true
+          git fetch upstream
+
+      - name: Check for updates
+        id: sync
+        run: |
+          LOCAL=$(git rev-parse HEAD)
+          REMOTE=$(git rev-parse upstream/master)
+          
+          if [ "$LOCAL" != "$REMOTE" ]; then
+            echo "has_new_commits=true" >> $GITHUB_OUTPUT
+            echo "发现新的提交，准备同步..."
+            
+            git merge upstream/master --no-edit
+            git push origin master
+            
+            echo "同步完成！"
+          else
+            echo "has_new_commits=false" >> $GITHUB_OUTPUT
+            echo "没有新的更改"
+          fi
+
+      - name: Get Date in UTC+8
+        id: get_date
+        run: echo "date=$(date -u -d '8 hours' +'%Y%m%d')" >> "$GITHUB_OUTPUT"
+
+      - name: Generate version tag
+        id: version
+        if: steps.sync.outputs.has_new_commits == 'true'
+        run: |
+          VERSION="auto-${{ steps.get_date.outputs.date }}-$(date +'%H%M%S')"
+          echo "version=$VERSION" >> $GITHUB_OUTPUT
+          echo "Generated version: $VERSION"
+
+  build-win-x64-arm64:
+    needs: sync-and-check
+    if: needs.sync-and-check.outputs.has-new-commits == 'true'
+    runs-on: windows-latest
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Set up dotnet
+        uses: actions/setup-dotnet@v4
+        with:
+          dotnet-version: ${{ env.DOTNET_SDK_VERSION }}
+
+      - name: Install zip
+        run: choco install zip --no-progress --yes
+
+      - name: Publish [win]
+        run: |
+          dotnet publish BBDown -r win-x64 -c Release -o artifact
+          dotnet publish BBDown -r win-arm64 -c Release -o artifact-arm64
+
+      - name: Package [win]
+        run: |
+          cd artifact
+          zip ../BBDown_${{ needs.sync-and-check.outputs.build-date }}_win-x64.zip BBDown.exe
+          cd ../artifact-arm64
+          zip ../BBDown_${{ needs.sync-and-check.outputs.build-date }}_win-arm64.zip BBDown.exe
+
+      - name: Upload Artifact [win-x64]
+        uses: actions/upload-artifact@v4
+        with:
+          name: BBDown_win-x64
+          path: BBDown_${{ needs.sync-and-check.outputs.build-date }}_win-x64.zip
+
+      - name: Upload Artifact [win-arm64]
+        uses: actions/upload-artifact@v4
+        with:
+          name: BBDown_win-arm64
+          path: BBDown_${{ needs.sync-and-check.outputs.build-date }}_win-arm64.zip
+
+  build-linux-x64-arm64:
+    needs: sync-and-check
+    if: needs.sync-and-check.outputs.has-new-commits == 'true'
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: setup deb822 repos
+        run: |
+          if [[ $ImageOS == "ubuntu24" ]]; then
+            cat <<EOF > deb822sources
+          Types: deb
+          URIs: http://archive.ubuntu.com/ubuntu/
+          Suites: noble
+          Components: main restricted universe
+          Architectures: amd64
+
+          Types: deb
+          URIs: http://security.ubuntu.com/ubuntu/
+          Suites: noble-security
+          Components: main restricted universe
+          Architectures: amd64
+
+          Types: deb
+          URIs: http://archive.ubuntu.com/ubuntu/
+          Suites: noble-updates
+          Components: main restricted universe
+          Architectures: amd64
+
+          Types: deb
+          URIs: http://azure.ports.ubuntu.com/ubuntu-ports/
+          Suites: noble
+          Components: main restricted multiverse universe
+          Architectures: arm64
+
+          Types: deb
+          URIs: http://azure.ports.ubuntu.com/ubuntu-ports/
+          Suites: noble-updates
+          Components: main restricted multiverse universe
+          Architectures: arm64
+          EOF
+
+            sudo mv deb822sources /etc/apt/sources.list.d/ubuntu.sources
+          fi
+
+      - name: Setup cross-compilation for ARM64
+        run: |
+          sudo dpkg --add-architecture arm64
+          sudo bash -c 'cat > /etc/apt/sources.list.d/arm64.list <<EOF
+          deb [arch=arm64] http://ports.ubuntu.com/ubuntu-ports/ jammy main restricted
+          deb [arch=arm64] http://ports.ubuntu.com/ubuntu-ports/ jammy-updates main restricted
+          deb [arch=arm64] http://ports.ubuntu.com/ubuntu-ports/ jammy-backports main restricted universe multiverse
+          EOF'
+          sudo sed -i -e 's/deb http/deb [arch=amd64] http/g' /etc/apt/sources.list
+          sudo sed -i -e 's/deb mirror/deb [arch=amd64] mirror/g' /etc/apt/sources.list
+          sudo apt-get update
+          sudo apt-get install -y curl wget libicu-dev libcurl4-openssl-dev zlib1g-dev libkrb5-dev clang llvm binutils-aarch64-linux-gnu gcc-aarch64-linux-gnu zlib1g-dev:arm64
+
+      - uses: actions/checkout@v4
+
+      - name: Set up dotnet
+        uses: actions/setup-dotnet@v4
+        with:
+          dotnet-version: ${{ env.DOTNET_SDK_VERSION }}
+
+      - name: Publish [linux]
+        run: |
+          dotnet publish BBDown -r linux-x64 -c Release -o artifact
+          dotnet publish BBDown -r linux-arm64 -c Release -o artifact-arm64
+
+      - name: Package [linux]
+        run: |
+          cd artifact
+          zip ../BBDown_${{ needs.sync-and-check.outputs.build-date }}_linux-x64.zip BBDown
+          cd ../artifact-arm64
+          zip ../BBDown_${{ needs.sync-and-check.outputs.build-date }}_linux-arm64.zip BBDown
+
+      - name: Upload Artifact [linux-x64]
+        uses: actions/upload-artifact@v4
+        with:
+          name: BBDown_linux-x64
+          path: BBDown_${{ needs.sync-and-check.outputs.build-date }}_linux-x64.zip
+
+      - name: Upload Artifact[linux-arm64]
+        uses: actions/upload-artifact@v4
+        with:
+          name: BBDown_linux-arm64
+          path: BBDown_${{ needs.sync-and-check.outputs.build-date }}_linux-arm64.zip
+
+  build-mac-x64-arm64:
+    needs: sync-and-check
+    if: needs.sync-and-check.outputs.has-new-commits == 'true'
+    runs-on: macos-latest
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Set up dotnet
+        uses: actions/setup-dotnet@v4
+        with:
+          dotnet-version: ${{ env.DOTNET_SDK_VERSION }}
+
+      - name: Publish [osx]
+        run: |
+          dotnet publish BBDown -r osx-x64 -c Release -o artifact
+          dotnet publish BBDown -r osx-arm64 -c Release -o artifact-arm64
+
+      - name: Package [osx]
+        run: |
+          cd artifact
+          zip ../BBDown_${{ needs.sync-and-check.outputs.build-date }}_osx-x64.zip BBDown
+          cd ../artifact-arm64
+          zip ../BBDown_${{ needs.sync-and-check.outputs.build-date }}_osx-arm64.zip BBDown
+
+      - name: Upload Artifact [osx-x64]
+        uses: actions/upload-artifact@v4
+        with:
+          name: BBDown_osx-x64
+          path: BBDown_${{ needs.sync-and-check.outputs.build-date }}_osx-x64.zip
+
+      - name: Upload Artifact [osx-arm64]
+        uses: actions/upload-artifact@v4
+        with:
+          name: BBDown_osx-arm64
+          path: BBDown_${{ needs.sync-and-check.outputs.build-date }}_osx-arm64.zip
+
+  create-release:
+    needs: [sync-and-check, build-win-x64-arm64, build-linux-x64-arm64, build-mac-x64-arm64]
+    if: needs.sync-and-check.outputs.has-new-commits == 'true'
+    runs-on: ubuntu-latest
+    
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Download all artifacts
+        uses: actions/download-artifact@v4
+        with:
+          path: ./artifacts
+
+      - name: Organize release files
+        run: |
+          mkdir -p ./release-files
+          find ./artifacts -name "*.zip" | xargs -I {} cp {} ./release-files/
+          ls -la ./release-files
+
+      - name: Get latest commit info
+        id: commit
+        run: |
+          COMMIT_MSG=$(git log -1 --pretty=format:"%s")
+          COMMIT_HASH=$(git rev-parse --short HEAD)
+          echo "message=$COMMIT_MSG" >> $GITHUB_OUTPUT
+          echo "hash=$COMMIT_HASH" >> $GITHUB_OUTPUT
+
+      - name: Create Release
+        uses: softprops/action-gh-release@v1
+        with:
+          tag_name: ${{ needs.sync-and-check.outputs.new-version }}
+          name: "Auto Release ${{ needs.sync-and-check.outputs.new-version }}"
+          body: |
+            🤖 **自动构建发布**
+            
+            这是基于上游仓库最新代码的自动构建版本。
+            
+            **更新内容:**
+            - 最新提交: ${{ steps.commit.outputs.message }}
+            - 提交哈希: ${{ steps.commit.outputs.hash }}
+            - 构建时间: ${{ github.run_started_at }}
+            
+            **支持平台:**
+            - ✅ Windows x64/ARM64
+            - ✅ Linux x64/ARM64  
+            - ✅ macOS x64/ARM64
+            
+            **使用说明:**
+            1. 下载对应平台的压缩包
+            2. 解压后即可直接运行
+            3. 详细使用方法请参考 [原项目文档](https://github.com/nilaoda/BBDown)
+            
+            ---
+            > 此版本由 GitHub Actions 自动构建，基于 [nilaoda/BBDown](https://github.com/nilaoda/BBDown) 最新代码
+          files: ./release-files/*
+          draft: false
+          prerelease: false
+          generate_release_notes: false
+
+  # 失败时的简单日志记录
+  log-failure:
+    needs: [sync-and-check, build-win-x64-arm64, build-linux-x64-arm64, build-mac-x64-arm64, create-release]
+    if: failure()
+    runs-on: ubuntu-latest
+    
+    steps:
+      - name: Log build failure
+        run: |
+          echo "🚨 自动构建失败 - $(date '+%Y-%m-%d %H:%M:%S')"
+          echo "工作流运行: https://github.com/${{ github.repository }}/actions/runs/${{ github.run_id }}"
+          echo "触发方式: ${{ github.event_name }}"
+          echo ""
+          echo "常见原因："
+          echo "- 上游代码变更导致编译错误"
+          echo "- 依赖项版本冲突"
+          echo "- .NET SDK版本不兼容"
+          echo "- 网络连接问题"
+          echo ""
+          echo "请查看上面的构建日志进行排查"
+          
+          # 在GitHub Actions界面显示失败摘要
+          echo "## 🚨 自动构建失败" >> $GITHUB_STEP_SUMMARY
+          echo "" >> $GITHUB_STEP_SUMMARY
+          echo "**失败时间**: $(date '+%Y-%m-%d %H:%M:%S')" >> $GITHUB_STEP_SUMMARY
+          echo "**工作流运行**: [查看详情](https://github.com/${{ github.repository }}/actions/runs/${{ github.run_id }})" >> $GITHUB_STEP_SUMMARY
+          echo "" >> $GITHUB_STEP_SUMMARY
+          echo "### 常见原因" >> $GITHUB_STEP_SUMMARY
+          echo "- 上游代码变更导致编译错误" >> $GITHUB_STEP_SUMMARY
+          echo "- 依赖项版本冲突" >> $GITHUB_STEP_SUMMARY
+          echo "- .NET SDK版本不兼容" >> $GITHUB_STEP_SUMMARY
+          echo "- 网络连接问题" >> $GITHUB_STEP_SUMMARY
+
+  # 成功时的简单通知
+  success-summary:
+    needs: [sync-and-check, create-release]
+    if: success() && needs.sync-and-check.outputs.has-new-commits == 'true'
+    runs-on: ubuntu-latest
+    
+    steps:
+      - name: Display success summary
+        run: |
+          echo "🎉 BBDown自动构建成功完成！"
+          echo ""
+          echo "📦 发布版本: ${{ needs.sync-and-check.outputs.new-version }}"
+          echo "🔗 Release地址: https://github.com/${{ github.repository }}/releases/tag/${{ needs.sync-and-check.outputs.new-version }}"
+          echo "⏰ 构建时间: $(date '+%Y-%m-%d %H:%M:%S')"
+          echo ""
+          echo "支持平台："
+          echo "  ✅ Windows (x64/ARM64)"
+          echo "  ✅ Linux (x64/ARM64)"
+          echo "  ✅ macOS (x64/ARM64)"
+          
+          # 在GitHub Actions界面设置输出摘要
+          echo "## 🎉 BBDown自动构建成功" >> $GITHUB_STEP_SUMMARY
+          echo "" >> $GITHUB_STEP_SUMMARY
+          echo "**版本**: ${{ needs.sync-and-check.outputs.new-version }}" >> $GITHUB_STEP_SUMMARY
+          echo "**发布地址**: [点击查看Release](https://github.com/${{ github.repository }}/releases/tag/${{ needs.sync-and-check.outputs.new-version }})" >> $GITHUB_STEP_SUMMARY
+          echo "" >> $GITHUB_STEP_SUMMARY
+          echo "### 支持平台" >> $GITHUB_STEP_SUMMARY
+          echo "- ✅ Windows (x64/ARM64)" >> $GITHUB_STEP_SUMMARY
+          echo "- ✅ Linux (x64/ARM64)" >> $GITHUB_STEP_SUMMARY
+          echo "- ✅ macOS (x64/ARM64)" >> $GITHUB_STEP_SUMMARY
