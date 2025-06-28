@@ -1,0 +1,334 @@
+name: Manual Build & Release
+
+on:
+  workflow_dispatch:
+    inputs:
+      commit_sha:
+        description: 'Upstream commit SHA to build (leave empty for latest)'
+        required: false
+        default: ''
+        type: string
+      version_suffix:
+        description: 'Custom version suffix (e.g., "hotfix", "test")'
+        required: false
+        default: ''
+        type: string
+      prerelease:
+        description: 'Mark as pre-release'
+        required: false
+        default: false
+        type: boolean
+      build_platforms:
+        description: 'Platforms to build'
+        required: false
+        default: 'all'
+        type: choice
+        options:
+          - 'all'
+          - 'windows-only'
+          - 'linux-only'
+          - 'macos-only'
+          - 'windows-linux'
+
+env:
+  UPSTREAM_REPO: 'nilaoda/BBDown'
+  DOTNET_SDK_VERSION: '9.0.*'
+  ACTIONS_ALLOW_USE_UNSECURE_NODE_VERSION: true
+
+jobs:
+  prepare-build:
+    runs-on: ubuntu-latest
+    outputs:
+      target-commit: ${{ steps.setup.outputs.target_commit }}
+      commit-message: ${{ steps.setup.outputs.commit_message }}
+      commit-date: ${{ steps.setup.outputs.commit_date }}
+      build-version: ${{ steps.setup.outputs.build_version }}
+      build-time: ${{ steps.setup.outputs.build_time }}
+      build-windows: ${{ steps.platforms.outputs.build_windows }}
+      build-linux: ${{ steps.platforms.outputs.build_linux }}
+      build-macos: ${{ steps.platforms.outputs.build_macos }}
+    
+    steps:
+      - name: Setup build parameters
+        id: setup
+        run: |
+          echo "=== Manual Build Setup ==="
+          
+          # Determine target commit
+          if [ -n "${{ github.event.inputs.commit_sha }}" ]; then
+            TARGET_COMMIT="${{ github.event.inputs.commit_sha }}"
+            echo "🎯 Using specified commit: $TARGET_COMMIT"
+          else
+            echo "🔍 Fetching latest upstream commit..."
+            UPSTREAM_RESPONSE=$(curl -s "https://api.github.com/repos/${{ env.UPSTREAM_REPO }}/commits/master")
+            TARGET_COMMIT=$(echo "$UPSTREAM_RESPONSE" | jq -r '.sha')
+            echo "📥 Using latest upstream commit: $TARGET_COMMIT"
+          fi
+          
+          # Get commit information
+          echo "📋 Fetching commit details..."
+          COMMIT_RESPONSE=$(curl -s "https://api.github.com/repos/${{ env.UPSTREAM_REPO }}/commits/$TARGET_COMMIT")
+          
+          if [ "$(echo "$COMMIT_RESPONSE" | jq -r '.sha')" = "null" ]; then
+            echo "❌ Invalid commit SHA: $TARGET_COMMIT"
+            exit 1
+          fi
+          
+          COMMIT_MESSAGE=$(echo "$COMMIT_RESPONSE" | jq -r '.commit.message' | head -1)
+          COMMIT_DATE=$(echo "$COMMIT_RESPONSE" | jq -r '.commit.committer.date')
+          
+          echo "✅ Target commit: $TARGET_COMMIT"
+          echo "📝 Commit message: $COMMIT_MESSAGE"
+          echo "📅 Commit date: $COMMIT_DATE"
+          
+          # Generate version
+          SHORT_COMMIT=$(echo "$TARGET_COMMIT" | cut -c1-7)
+          BUILD_DATE=$(date -u +'%Y%m%d')
+          BUILD_TIME=$(date -u +'%Y-%m-%d %H:%M:%S UTC')
+          
+          if [ -n "${{ github.event.inputs.version_suffix }}" ]; then
+            VERSION="v${BUILD_DATE}-${SHORT_COMMIT}-${{ github.event.inputs.version_suffix }}"
+          else
+            VERSION="v${BUILD_DATE}-${SHORT_COMMIT}-manual"
+          fi
+          
+          echo "🏷️  Generated version: $VERSION"
+          echo "🕐 Build time: $BUILD_TIME"
+          
+          # Set outputs
+          echo "target_commit=$TARGET_COMMIT" >> $GITHUB_OUTPUT
+          echo "commit_message=$COMMIT_MESSAGE" >> $GITHUB_OUTPUT
+          echo "commit_date=$COMMIT_DATE" >> $GITHUB_OUTPUT
+          echo "build_version=$VERSION" >> $GITHUB_OUTPUT
+          echo "build_time=$BUILD_TIME" >> $GITHUB_OUTPUT
+
+      - name: Determine build platforms
+        id: platforms
+        run: |
+          case "${{ github.event.inputs.build_platforms }}" in
+            "all")
+              echo "build_windows=true" >> $GITHUB_OUTPUT
+              echo "build_linux=true" >> $GITHUB_OUTPUT
+              echo "build_macos=true" >> $GITHUB_OUTPUT
+              echo "🏗️  Building for all platforms"
+              ;;
+            "windows-only")
+              echo "build_windows=true" >> $GITHUB_OUTPUT
+              echo "build_linux=false" >> $GITHUB_OUTPUT
+              echo "build_macos=false" >> $GITHUB_OUTPUT
+              echo "🏗️  Building for Windows only"
+              ;;
+            "linux-only")
+              echo "build_windows=false" >> $GITHUB_OUTPUT
+              echo "build_linux=true" >> $GITHUB_OUTPUT
+              echo "build_macos=false" >> $GITHUB_OUTPUT
+              echo "🏗️  Building for Linux only"
+              ;;
+            "macos-only")
+              echo "build_windows=false" >> $GITHUB_OUTPUT
+              echo "build_linux=false" >> $GITHUB_OUTPUT
+              echo "build_macos=true" >> $GITHUB_OUTPUT
+              echo "🏗️  Building for macOS only"
+              ;;
+            "windows-linux")
+              echo "build_windows=true" >> $GITHUB_OUTPUT
+              echo "build_linux=true" >> $GITHUB_OUTPUT
+              echo "build_macos=false" >> $GITHUB_OUTPUT
+              echo "🏗️  Building for Windows and Linux"
+              ;;
+          esac
+
+  build-windows:
+    needs: prepare-build
+    if: needs.prepare-build.outputs.build-windows == 'true'
+    runs-on: windows-latest
+    
+    steps:
+      - name: Clone upstream repository
+        run: |
+          git clone https://github.com/${{ env.UPSTREAM_REPO }}.git .
+          git checkout ${{ needs.prepare-build.outputs.target-commit }}
+
+      - name: Setup .NET
+        uses: actions/setup-dotnet@v4
+        with:
+          dotnet-version: ${{ env.DOTNET_SDK_VERSION }}
+
+      - name: Install zip
+        run: choco install zip --no-progress --yes
+
+      - name: Build Windows x64
+        run: dotnet publish BBDown -r win-x64 -c Release --self-contained -o ./build/win-x64
+
+      - name: Build Windows ARM64
+        run: dotnet publish BBDown -r win-arm64 -c Release --self-contained -o ./build/win-arm64
+
+      - name: Package Windows builds
+        run: |
+          cd ./build/win-x64
+          zip ../../BBDown-${{ needs.prepare-build.outputs.build-version }}-win-x64.zip BBDown.exe
+          cd ../win-arm64
+          zip ../../BBDown-${{ needs.prepare-build.outputs.build-version }}-win-arm64.zip BBDown.exe
+
+      - name: Upload Windows artifacts
+        uses: actions/upload-artifact@v4
+        with:
+          name: windows-builds
+          path: |
+            BBDown-${{ needs.prepare-build.outputs.build-version }}-win-x64.zip
+            BBDown-${{ needs.prepare-build.outputs.build-version }}-win-arm64.zip
+
+  build-linux:
+    needs: prepare-build
+    if: needs.prepare-build.outputs.build-linux == 'true'
+    runs-on: ubuntu-latest
+    
+    steps:
+      - name: Clone upstream repository
+        run: |
+          git clone https://github.com/${{ env.UPSTREAM_REPO }}.git .
+          git checkout ${{ needs.prepare-build.outputs.target-commit }}
+
+      - name: Setup .NET
+        uses: actions/setup-dotnet@v4
+        with:
+          dotnet-version: ${{ env.DOTNET_SDK_VERSION }}
+
+      - name: Build Linux x64
+        run: dotnet publish BBDown -r linux-x64 -c Release --self-contained -o ./build/linux-x64
+
+      - name: Build Linux ARM64
+        run: dotnet publish BBDown -r linux-arm64 -c Release --self-contained -o ./build/linux-arm64
+
+      - name: Package Linux builds
+        run: |
+          cd ./build/linux-x64
+          zip ../../BBDown-${{ needs.prepare-build.outputs.build-version }}-linux-x64.zip BBDown
+          cd ../linux-arm64
+          zip ../../BBDown-${{ needs.prepare-build.outputs.build-version }}-linux-arm64.zip BBDown
+
+      - name: Upload Linux artifacts
+        uses: actions/upload-artifact@v4
+        with:
+          name: linux-builds
+          path: |
+            BBDown-${{ needs.prepare-build.outputs.build-version }}-linux-x64.zip
+            BBDown-${{ needs.prepare-build.outputs.build-version }}-linux-arm64.zip
+
+  build-macos:
+    needs: prepare-build
+    if: needs.prepare-build.outputs.build-macos == 'true'
+    runs-on: macos-latest
+    
+    steps:
+      - name: Clone upstream repository
+        run: |
+          git clone https://github.com/${{ env.UPSTREAM_REPO }}.git .
+          git checkout ${{ needs.prepare-build.outputs.target-commit }}
+
+      - name: Setup .NET
+        uses: actions/setup-dotnet@v4
+        with:
+          dotnet-version: ${{ env.DOTNET_SDK_VERSION }}
+
+      - name: Build macOS x64
+        run: dotnet publish BBDown -r osx-x64 -c Release --self-contained -o ./build/osx-x64
+
+      - name: Build macOS ARM64
+        run: dotnet publish BBDown -r osx-arm64 -c Release --self-contained -o ./build/osx-arm64
+
+      - name: Package macOS builds
+        run: |
+          cd ./build/osx-x64
+          zip ../../BBDown-${{ needs.prepare-build.outputs.build-version }}-osx-x64.zip BBDown
+          cd ../osx-arm64
+          zip ../../BBDown-${{ needs.prepare-build.outputs.build-version }}-osx-arm64.zip BBDown
+
+      - name: Upload macOS artifacts
+        uses: actions/upload-artifact@v4
+        with:
+          name: macos-builds
+          path: |
+            BBDown-${{ needs.prepare-build.outputs.build-version }}-osx-x64.zip
+            BBDown-${{ needs.prepare-build.outputs.build-version }}-osx-arm64.zip
+
+  create-release:
+    needs: [prepare-build, build-windows, build-linux, build-macos]
+    if: always() && needs.prepare-build.result == 'success' && !cancelled()
+    runs-on: ubuntu-latest
+    
+    steps:
+      - name: Download artifacts
+        uses: actions/download-artifact@v4
+        with:
+          path: ./artifacts
+
+      - name: Organize release files
+        run: |
+          mkdir -p ./release-files
+          find ./artifacts -name "*.zip" -exec cp {} ./release-files/ \; 2>/dev/null || true
+          ls -la ./release-files/ || echo "No build artifacts found"
+
+      - name: Create Release
+        uses: softprops/action-gh-release@v1
+        with:
+          tag_name: ${{ needs.prepare-build.outputs.build-version }}
+          name: "BBDown ${{ needs.prepare-build.outputs.build-version }} (Manual Build)"
+          body: |
+            🔧 **Manual Build Release**
+            
+            This release was manually triggered and built from the upstream [nilaoda/BBDown](https://github.com/${{ env.UPSTREAM_REPO }}) repository.
+            
+            **Build Information:**
+            - 🆔 Source Commit: `${{ needs.prepare-build.outputs.target-commit }}`
+            - 📝 Commit Message: ${{ needs.prepare-build.outputs.commit-message }}
+            - 📅 Commit Date: ${{ needs.prepare-build.outputs.commit-date }}
+            - 🕐 Build Time: ${{ needs.prepare-build.outputs.build-time }}
+            - 🔧 Triggered by: @${{ github.actor }}
+            
+            **Build Configuration:**
+            - Windows: ${{ needs.prepare-build.outputs.build-windows == 'true' && '✅' || '⏭️' }}
+            - Linux: ${{ needs.prepare-build.outputs.build-linux == 'true' && '✅' || '⏭️' }}
+            - macOS: ${{ needs.prepare-build.outputs.build-macos == 'true' && '✅' || '⏭️' }}
+            
+            **Usage Instructions:**
+            1. Download the appropriate package for your platform
+            2. Extract the archive
+            3. Run the BBDown executable directly
+            4. For detailed usage, see [original project documentation](https://github.com/${{ env.UPSTREAM_REPO }})
+            
+            ---
+            > This is a manual build. For automatic builds tracking the latest upstream changes, see other releases.
+          files: ./release-files/*
+          draft: false
+          prerelease: ${{ github.event.inputs.prerelease == 'true' }}
+
+  # Build summary
+  build-summary:
+    needs: [prepare-build, build-windows, build-linux, build-macos, create-release]
+    if: always() && needs.prepare-build.result == 'success'
+    runs-on: ubuntu-latest
+    
+    steps:
+      - name: Generate build summary
+        run: |
+          echo "## 🔧 Manual Build Completed" >> $GITHUB_STEP_SUMMARY
+          echo "" >> $GITHUB_STEP_SUMMARY
+          echo "**Version**: ${{ needs.prepare-build.outputs.build-version }}" >> $GITHUB_STEP_SUMMARY
+          echo "**Source Commit**: ${{ needs.prepare-build.outputs.target-commit }}" >> $GITHUB_STEP_SUMMARY
+          echo "**Triggered By**: @${{ github.actor }}" >> $GITHUB_STEP_SUMMARY
+          echo "" >> $GITHUB_STEP_SUMMARY
+          echo "### Build Results" >> $GITHUB_STEP_SUMMARY
+          echo "- Windows: ${{ needs.build-windows.result || '⏭️ Skipped' }}" >> $GITHUB_STEP_SUMMARY
+          echo "- Linux: ${{ needs.build-linux.result || '⏭️ Skipped' }}" >> $GITHUB_STEP_SUMMARY
+          echo "- macOS: ${{ needs.build-macos.result || '⏭️ Skipped' }}" >> $GITHUB_STEP_SUMMARY
+          echo "- Release: ${{ needs.create-release.result }}" >> $GITHUB_STEP_SUMMARY
+          echo "" >> $GITHUB_STEP_SUMMARY
+          
+          if [ "${{ needs.create-release.result }}" = "success" ]; then
+            echo "🎉 **Release created successfully!**" >> $GITHUB_STEP_SUMMARY
+            echo "" >> $GITHUB_STEP_SUMMARY
+            echo "[View Release](https://github.com/${{ github.repository }}/releases/tag/${{ needs.prepare-build.outputs.build-version }})" >> $GITHUB_STEP_SUMMARY
+          else
+            echo "❌ **Release creation failed**" >> $GITHUB_STEP_SUMMARY
+          fi
