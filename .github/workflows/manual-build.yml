@@ -30,6 +30,10 @@ on:
           - 'macos-only'
           - 'windows-linux'
 
+permissions:
+  contents: write
+  actions: read
+
 env:
   UPSTREAM_REPO: 'nilaoda/BBDown'
   DOTNET_SDK_VERSION: '9.0.*'
@@ -198,7 +202,7 @@ jobs:
         run: dotnet publish BBDown -r linux-x64 -c Release --self-contained -o ./build/linux-x64
 
       - name: Build Linux ARM64
-        run: dotnet publish BBDown -r linux-arm64 -c Release --self-contained -o ./build/linux-arm64
+        run: dotnet publish BBDown -r linux-arm64 -c Release --self-contained -o ./build/linux-arm64 -p:StripSymbols=false
 
       - name: Package Linux builds
         run: |
@@ -274,6 +278,7 @@ jobs:
         with:
           tag_name: ${{ needs.prepare-build.outputs.build-version }}
           name: "BBDown ${{ needs.prepare-build.outputs.build-version }} (Manual Build)"
+          token: ${{ secrets.GITHUB_TOKEN }}
           body: |
             🔧 **Manual Build Release**
             
