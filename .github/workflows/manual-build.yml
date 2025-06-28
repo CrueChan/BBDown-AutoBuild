@@ -199,10 +199,10 @@ jobs:
           dotnet-version: ${{ env.DOTNET_SDK_VERSION }}
 
       - name: Build Linux x64
-        run: dotnet publish BBDown -r linux-x64 -c Release --self-contained -o ./build/linux-x64
+        run: dotnet publish BBDown -r linux-x64 -c Release -o ./build/linux-x64
 
       - name: Build Linux ARM64
-        run: dotnet publish BBDown -r linux-arm64 -c Release --self-contained -o ./build/linux-arm64 -p:StripSymbols=false
+        run: dotnet publish BBDown -r linux-arm64 -c Release -o ./build/linux-arm64
 
       - name: Package Linux builds
         run: |
