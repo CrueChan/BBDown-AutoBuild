@@ -195,12 +195,20 @@ jobs:
 
       - name: Install cross-compilation tools for ARM64
         run: |
+          # Get the codename of the current Ubuntu runner
+          UBUNTU_CODENAME=$(lsb_release -cs)
+          echo "Current Ubuntu Codename: $UBUNTU_CODENAME"
+          
           sudo dpkg --add-architecture arm64
-          sudo bash -c 'cat > /etc/apt/sources.list.d/arm64.list <<EOF
-          deb [arch=arm64] http://ports.ubuntu.com/ubuntu-ports/ jammy main restricted
-          deb [arch=arm64] http://ports.ubuntu.com/ubuntu-ports/ jammy-updates main restricted
-          deb [arch=arm64] http://ports.ubuntu.com/ubuntu-ports/ jammy-backports main restricted universe multiverse
-          EOF'
+          # Add ports.ubuntu.com for the current Ubuntu codename for arm64
+          sudo bash -c "cat > /etc/apt/sources.list.d/arm64-${UBUNTU_CODENAME}.list <<EOF
+          deb [arch=arm64] http://ports.ubuntu.com/ubuntu-ports/ ${UBUNTU_CODENAME} main restricted universe multiverse
+          deb [arch=arm64] http://ports.ubuntu.com/ubuntu-ports/ ${UBUNTU_CODENAME}-updates main restricted universe multiverse
+          deb [arch=arm64] http://ports.ubuntu.com/ubuntu-ports/ ${UBUNTU_CODENAME}-backports main restricted universe multiverse
+          deb [arch=arm64] http://ports.ubuntu.com/ubuntu-ports/ ${UBUNTU_CODENAME}-security main restricted universe multiverse
+          EOF"
+          
+          # Explicitly tell apt to only get amd64 packages from default sources
           sudo sed -i -e 's/deb http/deb [arch=amd64] http/g' /etc/apt/sources.list
           sudo sed -i -e 's/deb mirror/deb [arch=amd64] mirror/g' /etc/apt/sources.list
           sudo apt-get update
