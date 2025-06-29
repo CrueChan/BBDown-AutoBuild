@@ -186,12 +186,25 @@ jobs:
     needs: prepare-build
     if: needs.prepare-build.outputs.build-linux == 'true'
     runs-on: ubuntu-latest
-    
+
     steps:
       - name: Clone upstream repository
         run: |
           git clone https://github.com/${{ env.UPSTREAM_REPO }}.git .
           git checkout ${{ needs.prepare-build.outputs.target-commit }}
+
+      - name: Install cross-compilation tools for ARM64
+        run: |
+          sudo dpkg --add-architecture arm64
+          sudo bash -c 'cat > /etc/apt/sources.list.d/arm64.list <<EOF
+          deb [arch=arm64] http://ports.ubuntu.com/ubuntu-ports/ jammy main restricted
+          deb [arch=arm64] http://ports.ubuntu.com/ubuntu-ports/ jammy-updates main restricted
+          deb [arch=arm64] http://ports.ubuntu.com/ubuntu-ports/ jammy-backports main restricted universe multiverse
+          EOF'
+          sudo sed -i -e 's/deb http/deb [arch=amd64] http/g' /etc/apt/sources.list
+          sudo sed -i -e 's/deb mirror/deb [arch=amd64] mirror/g' /etc/apt/sources.list
+          sudo apt-get update
+          sudo apt-get install -y curl wget libicu-dev libcurl4-openssl-dev zlib1g-dev libkrb5-dev clang llvm binutils-aarch64-linux-gnu gcc-aarch64-linux-gnu zlib1g-dev:arm64
 
       - name: Setup .NET
         uses: actions/setup-dotnet@v4
@@ -203,13 +216,13 @@ jobs:
 
       - name: Build Linux ARM64
         run: |
-          # Set up environment for cross-compilation
+          # Set up environment for cross-compilation (This is now redundant for setting paths but harmless)
           export CC=aarch64-linux-gnu-gcc
           export CXX=aarch64-linux-gnu-g++
           export AR=aarch64-linux-gnu-ar
           export STRIP=aarch64-linux-gnu-strip
           export OBJCOPY=aarch64-linux-gnu-objcopy
-          
+
           dotnet publish BBDown -r linux-arm64 -c Release -o ./build/linux-arm64
 
       - name: Package Linux builds
