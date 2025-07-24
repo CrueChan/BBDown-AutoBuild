@@ -29,22 +29,17 @@ jobs:
         id: check
         run: |
           echo "=== Checking upstream repository for updates ==="
-          
-          # Get latest upstream commit information
-          echo "Fetching latest commit from upstream..."
-          UPSTREAM_RESPONSE=$(curl -s "https://api.github.com/repos/${{ env.UPSTREAM_REPO }}/commits/master")
-          
+          # Use authenticated request to avoid rate limits
+          UPSTREAM_RESPONSE=$(curl -s -H "Authorization: Bearer ${{ secrets.GITHUB_TOKEN }}" "https://api.github.com/repos/${{ env.UPSTREAM_REPO }}/commits/master")
           if [ $? -ne 0 ] || [ "$UPSTREAM_RESPONSE" = "" ]; then
             echo "❌ Failed to fetch upstream commit information"
             exit 1
           fi
-          
+      
           LATEST_COMMIT=$(echo "$UPSTREAM_RESPONSE" | jq -r '.sha')
-          COMMIT_MESSAGE=$(echo "$UPSTREAM_RESPONSE" | jq -r '.commit.message' | head -1)
-          COMMIT_DATE=$(echo "$UPSTREAM_RESPONSE" | jq -r '.commit.committer.date')
-          
           if [ "$LATEST_COMMIT" = "null" ] || [ "$LATEST_COMMIT" = "" ]; then
             echo "❌ Failed to parse upstream commit SHA"
+            echo "Response was: $UPSTREAM_RESPONSE"
             exit 1
           fi
           
